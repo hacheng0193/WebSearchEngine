@@ -131,6 +131,21 @@ def cmd_export(args):
     print(f"exported {len(rows)} metric_url rows of batch {args.batch}; {n_goto} distinct goto URLs")
 
 
+def wait_after(status, blocked_streak, args):
+    """Seconds to sleep before the next request, or None to stop.
+
+    One blocked response may be about that link alone, so move on to the next
+    one; only back off once `pause_after` links in a row are blocked.
+    """
+    if status != "blocked":
+        return args.interval
+    if blocked_streak >= args.max_blocked:
+        return None
+    if blocked_streak >= args.pause_after:
+        return args.backoff
+    return args.interval
+
+
 def cmd_resolve(args):
     state = open_state(args.state)
     blocked_streak = 0
@@ -156,16 +171,14 @@ def cmd_resolve(args):
         )
         state.commit()
 
+        blocked_streak = blocked_streak + 1 if status == "blocked" else 0
+        wait = wait_after(status, blocked_streak, args)
+        if wait is None:
+            print(f"{now_iso()} stopping: {blocked_streak} blocked responses in a row")
+            return
         if status == "blocked":
-            blocked_streak += 1
-            if blocked_streak >= args.max_blocked:
-                print(f"{now_iso()} stopping: {blocked_streak} blocked responses in a row")
-                return
-            print(f"{now_iso()} blocked ({http_status}), backing off {args.backoff}s")
-            time.sleep(args.backoff)
-            continue
-        blocked_streak = 0
-        time.sleep(args.interval)
+            print(f"{now_iso()} blocked ({http_status}) {blocked_streak} in a row, waiting {wait}s")
+        time.sleep(wait)
     print(f"{now_iso()} nothing left to resolve")
     cmd_status(args)
 
@@ -302,7 +315,8 @@ def main():
 
     p = sub.add_parser("resolve", help="follow each pending goto link once (resumable)")
     p.add_argument("--interval", type=float, default=5.0, help="seconds between requests")
-    p.add_argument("--backoff", type=float, default=600.0, help="seconds to wait after a blocked response")
+    p.add_argument("--backoff", type=float, default=600.0, help="seconds to wait once links keep getting blocked")
+    p.add_argument("--pause_after", type=int, default=2, help="back off after this many blocked responses in a row")
     p.add_argument("--max_blocked", type=int, default=5, help="stop after this many blocked responses in a row")
     p.add_argument("--max_attempts", type=int, default=3)
     p.set_defaults(func=cmd_resolve)

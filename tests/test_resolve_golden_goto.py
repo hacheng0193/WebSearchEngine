@@ -38,3 +38,15 @@ def test_golden_url_for_keeps_unresolved():
     resolved = {GOTO: "https://a.com/p"}
     assert golden_url_for(GOTO, resolved) == "https://a.com/p"
     assert golden_url_for("https://b.com/", resolved) == "https://b.com/"
+
+
+def test_wait_after_skips_one_block_and_backs_off_on_two():
+    from argparse import Namespace
+    from scripts.resolve_golden_goto import wait_after
+    args = Namespace(interval=5, backoff=600, pause_after=2, max_blocked=5)
+    assert wait_after("resolved", 0, args) == 5
+    assert wait_after("error", 0, args) == 5
+    assert wait_after("blocked", 1, args) == 5
+    assert wait_after("blocked", 2, args) == 600
+    assert wait_after("blocked", 4, args) == 600
+    assert wait_after("blocked", 5, args) is None
